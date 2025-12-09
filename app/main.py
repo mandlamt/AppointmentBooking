@@ -1,9 +1,15 @@
-from fastapi import FastAPI, HTTPException, Depends
+from fastapi import FastAPI, HTTPException, Depends, BackgroundTasks
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 from . import crud, schemas
 from .database import SessionLocal, init_db
+from .utils import get_api_key_dependency, send_notification_if_configured
 
 app = FastAPI(title="Appointment Booking")
+
+# serve simple frontend
+app.mount("/static", StaticFiles(directory="./frontend"), name="static")
 
 
 def get_db():
@@ -20,9 +26,16 @@ def on_startup():
 
 
 @app.post("/appointments", response_model=schemas.AppointmentRead)
-def create_appointment(appointment: schemas.AppointmentCreate, db: Session = Depends(get_db)):
+def create_appointment(
+    appointment: schemas.AppointmentCreate,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    api_key: None = Depends(get_api_key_dependency),
+):
     try:
         created = crud.create_appointment(db, appointment)
+        # send notification asynchronously if configured
+        background_tasks.add_task(send_notification_if_configured, created)
         return created
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -47,3 +60,9 @@ def delete_appointment(appointment_id: int, db: Session = Depends(get_db)):
     if not ok:
         raise HTTPException(status_code=404, detail="Appointment not found")
     return
+
+
+@app.get("/")
+def index():
+    # simple index that serves the frontend
+    return FileResponse("./frontend/index.html")
